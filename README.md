@@ -76,12 +76,19 @@ def filter_company_name(cleaned_company_name):
     else:
         return cleaned_company_name
 ```
-4. We itereate across the companies and check for fuzzy matches. For any match > 80%, we check the resulting match and remove from them the list of common words in the english dictionary. If after the removal a name remains in both, we check for the intersection of the two remaining sets. Of those, if the length of the total intersection characters is greater than the lenght of characters in the disjoint set, and the disjoint set size is zero, we return the shorter of the two company names
+4. We check for same names aggressively in a series of checks: 1) if after reduction the string is exactly a subset of one or the other, 2) whether after removing normal dictionary terms there still exists an intersection, and 3) after removal, if the string removing white space is the subset of one or the other
 ```python
-def non_normal_majority_merging(company_a, company_b):
+def check_same_name(company_a, company_b):
     """
     For each token in the company name, if both companies have character remains after filtering for normal words, if the intersection of non-english words is > 0 return True
     """
+
+    # check for subset of string space removed
+    if "".join(company_a.split()) in "".join(company_b.split()) or "".join(
+        company_b.split()
+    ) in "".join(company_a.split()):
+        return True
+
     d = set(words.words())
     a = set(company_a.split(" "))
     b = set(company_b.split(" "))
@@ -89,59 +96,92 @@ def non_normal_majority_merging(company_a, company_b):
     remain_a = set(a) - set(d)
     remain_b = set(b) - set(d)
 
-    if len(remain_a) <= 0 or len(remain_b) <= 0:
-        return False, None
-    else:
-        # check for intersection. If the total words in the intersection characters is greater than the mean of the disjoint character sum, return True
+    # print(remain_a)
+    # print(remain_b)
+    answer = False
+
+    # if either company retains words after you subtract the normal dictionary
+    if len(remain_a) > 0 and len(remain_b) > 0:
         intersect = remain_a.intersection(remain_b)
-        disjoint = remain_a ^ remain_b
+        print("\t\t[%s]: %s" % (len(intersect), intersect))
+        print(remain_a)
+        print(remain_b)
+        print(remain_a ^ remain_b)
+        # if size of the intersection is the whole word for at least one of the company names, return True
+        if len(intersect) > 0:
+            answer = True
+        elif "".join(remain_a) in "".join(remain_b) or "".join(remain_b) in "".join(
+            remain_a
+        ):
+            answer = True
 
-        int_s = "".join(intersect)
-        dis_s = "".join(disjoint)
-
-        if len(int_s) > len(dis_s) and len(dis_s) == 0:
-            return True, min([company_a, company_b], key=len)
-        else:
-            return False, None
+    return answer
 ```
 
-In the main function, we iterate across an example companies list once to see the results:
+In the main function, we iterate across an example companies popping one at a time until empty. Furthermore, for each remaining, we pop the candidate to see if it matches, and leave it removed if a match is found to further reduce the runtime. A couple of re-runs do occur, but so far the damage on the second run is minimal and we keep it about n^2 in the worst case scenario.
+
 ```python
-    # Testing the filters
-    print(filter_company_name("coca cola co"))
-    print(filter_company_name("coca cola"))
-    states_df = prep_states_info()
-    states = itertools.chain(
-        states_df["State"], states_df["Standard"], states_df["Postal"]
-    )
-    print(filter_states_info("coca cola fl", states))
-
-    # Testing the final set of company names
-    df = pd.read_csv("QnA_Labeled_Food_Companies_2017_companies.csv")
+    # Load in and return a set of companies
+    df = pd.read_csv("QnA_Labeled_Food_Companies_2017_companies_roberta.csv")
     print(df.columns)
-    # remove nonalphanumeric
     df["cleaned"] = df["qa_company_1"].map(clean_str)
-    # remove states from the end of the name
     df["cleaned"] = df["cleaned"].apply(lambda x: filter_states_info(x, states))
-    # remove common company endings from the end of the name
     df["cleaned"] = df["cleaned"].map(filter_company_name)
-    companies = list(df["cleaned"].unique())
 
+    companies = list(df["cleaned"].unique())
+    # companies = companies[:100]  # small test
     starting_size = len(companies)
 
     print("Length of cleaned companies: %s" % len(companies))
-    for i in tqdm(range(len(companies))):
-        for j in range(len(companies)):
-            if i != j and fuzz.ratio(companies[i], companies[j]) > 80:
-                found, name = non_normal_majority_merging(companies[i], companies[j])
-                if found:
-                    print(
-                        "merge found: (%s, %s) --> %s"
-                        % (companies[i], companies[j], name)
-                    )
-                    companies[i] = name
-                    companies[j] = name
 
-    print("List of merged companies: %s" % len(set(companies)))
-    print("Total companies reduced: %s" % (len(set(companies)) - starting_size))
+    print("Starting company matches")
+
+    company_dict = {
+        # company_name: set(different_company varaitions, variation2, variation3, ...)
+    }
+
+    start_length = len(companies)
+    with tqdm(total=start_length * start_length) as pbar:
+        while len(companies) > 0:
+            target_company = companies.pop(0)
+            company_dict[target_company] = [target_company]
+            pbar.set_description("Target company:\t%s" % target_company)
+
+            # now for all remaining companies, check if the company matches the company dictionary
+            for i in range(len(companies)):
+                candidate_company = companies.pop(0)
+                # print("candidate company: %s" % candidate_company)
+                # pbar.set_description("Checking:\t%s" % candidate_company)
+                matched = False
+                if fuzz.ratio(target_company, candidate_company) > 80:
+                    print(
+                        "Found candidate: (%s,%s) --> %s"
+                        % (
+                            target_company,
+                            candidate_company,
+                            check_same_name(target_company, candidate_company),
+                        )
+                    )
+                    if check_same_name(target_company, candidate_company):
+                        company_dict[target_company].append(candidate_company)
+                        print(company_dict[target_company])
+                        print(
+                            "\t[%s] new match found (%s,%s)"
+                            % (
+                                len(company_dict[target_company]),
+                                target_company,
+                                candidate_company,
+                            )
+                        )
+                        matched = True
+                if not matched:  # add it back into the original list
+                    companies.append(candidate_company)
+            pbar.update(start_length - len(companies))
+
+    pprint(company_dict)
+    reduced = pd.DataFrame.from_dict(company_dict, orient="index")
+    print(reduced)
+    reduced.to_csv("company_rep.csv", index=False)
 ```
+
+Given the example data set, we achieved a 58% reduction in the number of companies, from 4652 companies down to -> 2240)
