@@ -92,7 +92,8 @@ def check_same_name(company_a, company_b):
     d = set(words.words())
     a = set(company_a.split(" "))
     b = set(company_b.split(" "))
-
+    
+    # removing the set of dictionary words from the company tokens
     remain_a = set(a) - set(d)
     remain_b = set(b) - set(d)
 
