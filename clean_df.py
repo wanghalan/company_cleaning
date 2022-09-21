@@ -175,6 +175,7 @@ def clean(df, default_col="name", keep_process=False):
 
 
 if __name__ == "__main__":
+    # haha!
     parser = argparse.ArgumentParser(description="Compress a set of company names")
     parser.add_argument(
         "-i",
