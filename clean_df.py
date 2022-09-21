@@ -16,22 +16,26 @@ import os
 
 def clean_str(s, replace=" "):
     s = re.sub(
-        "[^0-9a-zA-Z]+", " ", s
+        r"[^A-Za-z0-9 ]+", "", s
     ).strip()  # remove all nonalphanumeric, and removes leading and trailing zeros
     s = " ".join(s.split())  # remove etra white spaces in the middle
-    s = s.lower()  # to lower case
     return s
 
 
 def filter_company_name(cleaned_company_name):
     endings = {
         "labs",
+        "bio",
+        "biotech",
+        "laboratories",
         "ventures",
         "solutions",
+        "sciences",
         "partners",
         "holdings",
         "son",
         "co",
+        "corp",
         "corporation",
         "inc",
         "incorporated",
@@ -48,6 +52,9 @@ def filter_company_name(cleaned_company_name):
         "direct",
         "online",
         "properties",
+        "pharm",
+        "pharms",
+        "pharma",
         "usa",
         "development",
         "technologies",
@@ -59,16 +66,15 @@ def filter_company_name(cleaned_company_name):
         "digital",
         "brands",
         "logistics",
+        "llc",
+        "ltd",
         "companies",
         "company",
         "creative",
         "productions",
         "prod",
     }
-    if cleaned_company_name.split(" ")[-1] in endings:
-        return " ".join(cleaned_company_name.split(" ")[:-1])
-    else:
-        return cleaned_company_name
+    return " ".join([v for v in cleaned_company_name.split(" ") if not v in endings])
 
 
 def prep_states_info():
@@ -76,14 +82,36 @@ def prep_states_info():
     us_states_df["State"] = us_states_df["State"].map(clean_str)
     us_states_df["Standard"] = us_states_df["Standard"].map(clean_str)
     us_states_df["Postal"] = us_states_df["Postal"].map(clean_str)
-    return us_states_df
+    states = itertools.chain(
+        us_states_df["State"], us_states_df["Standard"], us_states_df["Postal"]
+    )
+    return states
 
 
 def filter_states_info(cleaned_company_name, states):
-    if cleaned_company_name.split(" ")[-1] in states:
-        return " ".join(cleaned_company_name.split(" ")[:-1])
+    return " ".join([v for v in cleaned_company_name.split(" ") if not v in states])
+
+
+def get_words():
+    return set(words.words())
+
+
+def filter_common_words(company_name, words, length_cutoff=3):
+    tokens = company_name.split(" ")
+    blanket = " ".join([v for v in tokens if not v in words or len(v)])
+    if (
+        len(blanket) == 0
+    ):  # if the entirety of the word is removed, return a substring up to a token of the cutoff
+        answer = []
+        for token in tokens:
+            if len(token) >= length_cutoff:
+                answer.append(token)
+                break
+            else:
+                answer.append(token)
+        return " ".join(answer)
     else:
-        return cleaned_company_name
+        return blanket
 
 
 def check_same_name(company_a, company_b, lcp_cutoff=5):
@@ -91,26 +119,12 @@ def check_same_name(company_a, company_b, lcp_cutoff=5):
     For each token in the company name, if both companies have character remains after filtering for normal words, if the intersection of non-english words is > 0 return True
     """
 
-    # check for exact subset of string space removed
-    if "".join(company_a.split()) in "".join(company_b.split()) or "".join(
-        company_b.split()
-    ) in "".join(company_a.split()):
-        return True
-
     d = set(words.words())
     a = set(company_a.split(" "))
     b = set(company_b.split(" "))
 
     remain_a = set(a) - set(d)
     remain_b = set(b) - set(d)
-
-    # check for longest_common_substrings > 5 after removing dictionary names
-    lcp = os.path.commonprefix(["".join(sorted(remain_a)), "".join(sorted(remain_a))])
-    if len(lcp) > lcp_cutoff:
-        return True
-    # logging.debug(remain_a)
-    # logging.debug(remain_b)
-    answer = False
 
     # if either company retains words after you subtract the normal dictionary
     if len(remain_a) > 0 and len(remain_b) > 0:
@@ -120,27 +134,47 @@ def check_same_name(company_a, company_b, lcp_cutoff=5):
         logging.debug(remain_b)
         logging.debug(remain_a ^ remain_b)
         # if size of the intersection is the whole word for at least one of the company names, return True
-        if len(intersect) > 0:
-            answer = True
-        elif "".join(remain_a) in "".join(remain_b) or "".join(remain_b) in "".join(
+        if len(intersect) > min([len(a), len(b)]) + 1:
+            return True
+        elif "".join(remain_a) in "".join(remain_b) and "".join(remain_b) in "".join(
             remain_a
         ):
-            answer = True
+            return True
 
-    return answer
+    return False
+
+
+def get_shortest_non_empty(*args):
+    return min([v for v in list(args) if len(v) > 0])
+
+
+def clean(df, default_col="name", keep_process=False):
+    # prep dictionary of information
+    states = prep_states_info()
+    common_words = get_words()
+
+    df = df.dropna()
+    df["name"] = df[default_col].str.lower()
+    df["clean"] = df["name"].map(clean_str)
+    df["-company"] = df["clean"].map(filter_company_name)
+    df["-states"] = df["-company"].apply(lambda x: filter_states_info(x, states))
+
+    df["-common"] = df["-states"].apply(lambda x: filter_common_words(x, common_words))
+    df["short"] = df.apply(
+        lambda row: get_shortest_non_empty(
+            row["name"], row["clean"], row["-company"], row["-states"], row["-common"]
+        ),
+        axis=1,
+    )
+    if not keep_process:
+        ndf = pd.DataFrame()
+        ndf["name"] = sorted(list(df["short"].unique()))
+        return ndf
+    else:
+        return df
 
 
 if __name__ == "__main__":
-    # logging.debug(filter_company_name("coca cola co"))
-    # logging.debug(filter_company_name("coca cola"))
-    # logging.debug(filter_company_name("great lakes brewing company"))
-    # logging.debug(filter_company_name("boston bears co"))
-    states_df = prep_states_info()
-    states = itertools.chain(
-        states_df["State"], states_df["Standard"], states_df["Postal"]
-    )
-    # logging.debug(filter_states_info("coca cola fl", states))
-
     parser = argparse.ArgumentParser(description="Compress a set of company names")
     parser.add_argument(
         "-i",
@@ -175,61 +209,67 @@ if __name__ == "__main__":
     df = pd.read_csv(args.input_file)
     logging.info("Columns: %s" % df.columns)
     logging.info(df)
-    df["cleaned"] = df[args.column].map(clean_str)
-    df["cleaned"] = df["cleaned"].apply(lambda x: filter_states_info(x, states))
-    df["cleaned"] = df["cleaned"].map(filter_company_name)
+    starting_size = len(df)
 
-    companies = list(df["cleaned"].unique())
+    df = clean(df, args.column)
+    companies = list(df["name"].unique())
     # companies = companies[:100]  # small test
-    starting_size = len(companies)
-
     logging.debug("Length of cleaned companies: %s" % len(companies))
 
     logging.debug("Starting company matches")
 
-    company_dict = {
-        # company_name: set(different_company varaitions, variation2, variation3, ...)
-    }
+    # company_dict = {
+    #     # company_name: set(different_company varaitions, variation2, variation3, ...)
+    # }
 
-    start_length = len(companies)
-    with tqdm(total=start_length) as pbar:
-        while len(companies) > 0:
-            target_company = companies.pop(0)
-            company_dict[target_company] = [target_company]
-            pbar.set_description("Target company:\t%s" % target_company)
+    # start_clean_size = len(companies)
+    # i = 0
+    # with tqdm(total=int((start_clean_size * (start_clean_size - 1)) / 2)) as pbar:
+    #     while len(companies) > 0:
+    #         i += 1
+    #         target_company = companies.pop(0)
+    #         company_dict[target_company] = [target_company]
+    #         pbar.set_description("Target company:\t%s" % target_company)
 
-            # now for all remaining companies, check if the company matches the company dictionary
-            for i in range(len(companies)):
-                candidate_company = companies.pop(0)
-                # logging.debug("candidate company: %s" % candidate_company)
-                # pbar.set_description("Checking:\t%s" % candidate_company)
-                matched = False
-                if fuzz.ratio(target_company, candidate_company) > 80:
-                    logging.debug(
-                        "Found candidate: (%s,%s) --> %s"
-                        % (
-                            target_company,
-                            candidate_company,
-                            check_same_name(target_company, candidate_company),
-                        )
-                    )
-                    if check_same_name(target_company, candidate_company):
-                        company_dict[target_company].append(candidate_company)
-                        logging.debug(company_dict[target_company])
-                        logging.debug(
-                            "\t[%s] new match found (%s,%s)"
-                            % (
-                                len(company_dict[target_company]),
-                                target_company,
-                                candidate_company,
-                            )
-                        )
-                        matched = True
-                if not matched:  # add it back into the original list
-                    companies.append(candidate_company)
-            pbar.update(start_length - 1)
+    #         # now for all remaining companies, check if the company matches the company dictionary
+    #         for i in range(len(companies)):
+    #             candidate_company = companies.pop(0)
+    #             # logging.debug("candidate company: %s" % candidate_company)
+    #             # pbar.set_description("Checking:\t%s" % candidate_company)
+    #             matched = False
+    #             if fuzz.ratio(target_company, candidate_company) > 80:
+    #                 logging.debug(
+    #                     "Found candidate: (%s,%s) --> %s"
+    #                     % (
+    #                         target_company,
+    #                         candidate_company,
+    #                         check_same_name(target_company, candidate_company),
+    #                     )
+    #                 )
+    #                 if check_same_name(target_company, candidate_company):
+    #                     company_dict[target_company].append(candidate_company)
+    #                     logging.debug(company_dict[target_company])
+    #                     logging.debug(
+    #                         "\t[%s] new match found (%s,%s)"
+    #                         % (
+    #                             len(company_dict[target_company]),
+    #                             target_company,
+    #                             candidate_company,
+    #                         )
+    #                     )
+    #                     matched = True
+    #             if not matched:  # add it back into the original list
+    #                 companies.append(candidate_company)
+    #         pbar.update(start_clean_size - len(companies))
 
-    logging.debug(company_dict)
-    reduced = pd.DataFrame.from_dict(company_dict, orient="index")
-    logging.debug(reduced)
+    # logging.debug(company_dict)
+    # reduced = pd.DataFrame.from_dict(company_dict, orient="index")
+    reduced = pd.DataFrame()
+    reduced["name"] = sorted(companies)
+    logging.info(reduced)
     reduced.to_csv(args.output_file, index=False)
+    logging.info("-" * 80)
+    logging.info(
+        "Reduction: %.2f" % (((starting_size) - len(companies)) / starting_size)
+    )
+    logging.info("Final size: %s" % len(reduced))
