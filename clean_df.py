@@ -16,7 +16,7 @@ import os
 
 def clean_str(s, replace=" "):
     s = re.sub(
-        r"[^A-Za-z0-9 ]+", "", s
+        r"[^A-Za-z]+", "", s
     ).strip()  # remove all nonalphanumeric, and removes leading and trailing zeros
     s = " ".join(s.split())  # remove etra white spaces in the middle
     return s
@@ -145,7 +145,11 @@ def check_same_name(company_a, company_b, lcp_cutoff=5):
 
 
 def get_shortest_non_empty(*args):
-    return min([v for v in list(args) if len(v) > 0])
+    l = [v for v in list(args) if len(v) > 0]
+    if len(l) > 0:
+        return min(l)
+    else:
+        return ""
 
 
 def clean(df, default_col="name", keep_process=False):
@@ -162,13 +166,14 @@ def clean(df, default_col="name", keep_process=False):
     df["-common"] = df["-states"].apply(lambda x: filter_common_words(x, common_words))
     df["short"] = df.apply(
         lambda row: get_shortest_non_empty(
-            row["name"], row["clean"], row["-company"], row["-states"], row["-common"]
+            row["clean"], row["-company"], row["-states"], row["-common"]
         ),
         axis=1,
     )
     if not keep_process:
         ndf = pd.DataFrame()
         ndf["name"] = sorted(list(df["short"].unique()))
+        ndf = ndf[["short", "name", "clean", "-company", "-states", "-common"]]
         return ndf
     else:
         return df
