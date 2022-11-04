@@ -97,8 +97,9 @@ def get_words():
 
 
 def filter_common_words(company_name, words, length_cutoff=3):
-    tokens = company_name.split(" ")
-    blanket = " ".join([v for v in tokens if not v in words or len(v)])
+    tokens = nltk.tokenize(company_name)
+    p = nltk.PorterStemmer()
+    blanket = " ".join([v for v in tokens if not p.stem(v) in words])
     if (
         len(blanket) == 0
     ):  # if the entirety of the word is removed, return a substring up to a token of the cutoff
